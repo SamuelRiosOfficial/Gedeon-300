@@ -102,9 +102,18 @@ function WheatBundle({ collected }) {
   </group>;
 }
 
+const KEY_BINDINGS = {
+  ArrowUp: 'up', KeyW: 'up', w: 'up', W: 'up',
+  ArrowDown: 'down', KeyS: 'down', s: 'down', S: 'down',
+  ArrowLeft: 'left', KeyA: 'left', a: 'left', A: 'left',
+  ArrowRight: 'right', KeyD: 'right', d: 'right', D: 'right',
+  KeyZ: 'run', z: 'run', Z: 'run',
+  KeyX: 'action', x: 'action', X: 'action',
+};
+
 function Gideon({onStatus,onCollected}) {
   const root=useRef(), leftLeg=useRef(), rightLeg=useRef(), leftArm=useRef(), rightArm=useRef(), cloak=useRef();
-  const keys=useRef({});
+  const keys=useRef({up:false,down:false,left:false,right:false,run:false});
   const stealth=useRef(false), collected=useRef(false), lock=useRef(false);
   const [isStealth,setIsStealth]=useState(false);
   const act=useCallback(()=>{
@@ -117,17 +126,39 @@ function Gideon({onStatus,onCollected}) {
     window.setTimeout(()=>{lock.current=false;if(rightArm.current)rightArm.current.rotation.x=0;},420);
   },[onCollected,onStatus]);
   useEffect(()=>{
-    const down=e=>{if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','KeyZ','KeyX'].includes(e.code))e.preventDefault();if(e.code==='KeyX'&&!e.repeat)act();keys.current[e.code]=true;};
-    const up=e=>{keys.current[e.code]=false;};
-    window.addEventListener('keydown',down,{passive:false});window.addEventListener('keyup',up);
-    return()=>{window.removeEventListener('keydown',down);window.removeEventListener('keyup',up);};
+    const clearKeys=()=>{Object.keys(keys.current).forEach(key=>{keys.current[key]=false;});};
+    const down=e=>{
+      const action=KEY_BINDINGS[e.code]||KEY_BINDINGS[e.key];
+      if(!action)return;
+      e.preventDefault();
+      if(action==='action'){
+        if(!e.repeat)act();
+        return;
+      }
+      keys.current[action]=true;
+    };
+    const up=e=>{
+      const action=KEY_BINDINGS[e.code]||KEY_BINDINGS[e.key];
+      if(action&&action!=='action')keys.current[action]=false;
+    };
+    // Capture phase keeps the controls working even when the canvas has focus.
+    window.addEventListener('keydown',down,{capture:true,passive:false});
+    window.addEventListener('keyup',up,true);
+    window.addEventListener('blur',clearKeys);
+    document.addEventListener('visibilitychange',clearKeys);
+    return()=>{
+      window.removeEventListener('keydown',down,true);
+      window.removeEventListener('keyup',up,true);
+      window.removeEventListener('blur',clearKeys);
+      document.removeEventListener('visibilitychange',clearKeys);
+    };
   },[act]);
   useFrame((state,delta)=>{
     if(!root.current)return;
-    const k=keys.current,x=Number(k.ArrowRight)-Number(k.ArrowLeft),z=Number(k.ArrowDown)-Number(k.ArrowUp);
-    const moving=!!(x||z),running=moving&&!!k.KeyZ&&!stealth.current,speed=stealth.current?1.55:running?7.2:3.7;
+    const k=keys.current,x=Number(k.right)-Number(k.left),z=Number(k.down)-Number(k.up);
+    const moving=!!(x||z),running=moving&&k.run&&!stealth.current,speed=stealth.current?1.55:running?7.2:3.7;
     if(moving){const d=new THREE.Vector3(x,0,z).normalize();root.current.position.addScaledVector(d,delta*speed);root.current.position.x=THREE.MathUtils.clamp(root.current.position.x,-24,24);root.current.position.z=THREE.MathUtils.clamp(root.current.position.z,-24,24);root.current.rotation.y=Math.atan2(d.x,d.z);}
-    const t=state.clock.elapsedTime, stride=moving?Math.sin(t*(running?13:8))*(running?.72:.43):0;
+    const t=state.clock.elapsedTime, stride=moving?Math.sin(t*(running?13:8))*(running ? 0.72 : 0.43):0;
     if(leftLeg.current)leftLeg.current.rotation.x=stride;if(rightLeg.current)rightLeg.current.rotation.x=-stride;
     if(leftArm.current)leftArm.current.rotation.x=-stride*.55;if(rightArm.current&&rightArm.current.rotation.x===0)rightArm.current.rotation.x=stride*.55;
     if(cloak.current){cloak.current.rotation.x=.08+Math.sin(t*4)*.025+(running?.08:0);}
