@@ -122,7 +122,7 @@ function PathRibbon() {
       uvs.push(0, i / 9, 1, i / 9);
       if (i < points.length - 1) {
         const n = i * 2;
-        indices.push(n, n + 1, n + 2, n + 1, n + 3, n + 2);
+        indices.push(n, n + 2, n + 1, n + 1, n + 2, n + 3);
       }
     }
     const g = new THREE.BufferGeometry();
@@ -476,7 +476,7 @@ function Gideon({ onStatus, onCollected }) {
     if (leftLeg.current) leftLeg.current.rotation.x = stride;
     if (rightLeg.current) rightLeg.current.rotation.x = -stride;
     if (leftArm.current) leftArm.current.rotation.x = -stride * 0.55;
-    if (rightArm.current && rightArm.current.rotation.x === 0) rightArm.current.rotation.x = stride * 0.55;
+    if (rightArm.current) rightArm.current.rotation.x = lock.current && rightArm.current.rotation.x < -1 ? rightArm.current.rotation.x : stride * 0.55;
     if (cloak.current) {
       cloak.current.rotation.x = 0.06 + Math.sin(t * 3.2) * 0.018 + (running ? 0.08 : 0);
     }
