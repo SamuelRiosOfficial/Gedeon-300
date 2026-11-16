@@ -1,6 +1,6 @@
 # Gedeón 300
 
-A lightweight browser-based 3D biblical adventure prototype built with React, Vite, Three.js and React Three Fiber.
+A browser-based 3D biblical adventure prototype built with React, Vite, Three.js and React Three Fiber.
 
 ## Requirements
 
@@ -25,9 +25,10 @@ npm run preview
 
 - Arrow keys: walk
 - Hold Z: run
-- X: contextual action
-  - Near the hidden wheat: collect it
-  - Near the practice post: strike it
-  - Elsewhere: toggle stealth
+- X: contextual action — collect the hidden wheat, strike the practice post, or toggle stealth depending on proximity.
 
-The project currently uses procedural placeholder geometry. A dedicated character model, authored animations, sound, and additional mission sequences are planned for later iterations.
+## Current prototype
+
+The first village scene uses procedural Three.js geometry: stone houses with doors and windows, olive trees, instanced wheat, fences, jars, distant ridges, sunset lighting, a follow camera and a stylized provisional Gideon character with procedural walk/run motion.
+
+The character is not yet a rigged production GLB model. A licensed character asset and authored animation clips are a separate next integration step. No third-party account or paid service is currently required.
