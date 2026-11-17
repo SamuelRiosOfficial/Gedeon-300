@@ -1,5 +1,5 @@
 import { Canvas, useFrame } from '@react-three/fiber';
-import { Sky, ContactShadows } from '@react-three/drei';
+import { Sky, ContactShadows, useAnimations, useGLTF } from '@react-three/drei';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
 
@@ -384,22 +384,31 @@ const KEY_BINDINGS = {
   KeyX: 'action', x: 'action', X: 'action',
 };
 
-function Gideon({ onStatus, onCollected, touchDirection, touchRunning }) {
+function Gideon({ onStatus, onCollected, touchDirection, touchRunning, onModeChange }) {
   const root = useRef();
-  const leftLeg = useRef();
-  const rightLeg = useRef();
-  const leftArm = useRef();
-  const rightArm = useRef();
-  const cloak = useRef();
   const keys = useRef({ up: false, down: false, left: false, right: false, run: false });
   const stealth = useRef(false);
   const collected = useRef(false);
   const lock = useRef(false);
   const velocity = useRef(new THREE.Vector3());
   const desiredYaw = useRef(Math.PI);
-  const [isStealth, setIsStealth] = useState(false);
-  const [nearWheat, setNearWheat] = useState(false);
-  const [nearPost, setNearPost] = useState(false);
+  const modeRef = useRef('Idle');
+  const activeAction = useRef(null);
+  const [locomotion, setLocomotion] = useState('Idle');
+
+  const { scene: character, animations } = useGLTF(`${import.meta.env.BASE_URL}assets/gedeon-character.glb`);
+  const { actions } = useAnimations(animations, root);
+
+  useEffect(() => {
+    const next = actions?.[locomotion];
+    if (!next) return;
+    const previous = activeAction.current;
+    const speed = locomotion === 'Run' ? 1.18 : locomotion === 'Stealth' ? 0.72 : 1;
+    next.reset().setLoop(THREE.LoopRepeat, Infinity).setEffectiveTimeScale(speed).setEffectiveWeight(1).fadeIn(0.2).play();
+    if (previous && previous !== next) previous.fadeOut(0.2);
+    activeAction.current = next;
+    return () => next.fadeOut(0.2);
+  }, [actions, locomotion]);
 
   const collectWheat = useCallback(() => {
     if (!root.current || lock.current || collected.current) return;
@@ -423,16 +432,11 @@ function Gideon({ onStatus, onCollected, touchDirection, touchRunning }) {
     lock.current = true;
     if (root.current.position.distanceTo(TRAINING_POST) < 3.1) {
       onStatus('Gedeón golpea el poste de práctica.');
-      if (rightArm.current) rightArm.current.rotation.x = -2;
     } else {
       stealth.current = !stealth.current;
-      setIsStealth(stealth.current);
-      onStatus(stealth.current ? 'Sigilo activado.' : 'Has salido del modo sigilo.');
+      onStatus(stealth.current ? 'Sigilo activado. Te mueves más despacio.' : 'Has salido del modo sigilo.');
     }
-    window.setTimeout(() => {
-      lock.current = false;
-      if (rightArm.current) rightArm.current.rotation.x = 0;
-    }, 420);
+    window.setTimeout(() => { lock.current = false; }, 420);
   }, [collectWheat, onStatus]);
 
   useEffect(() => {
@@ -493,23 +497,13 @@ function Gideon({ onStatus, onCollected, touchDirection, touchRunning }) {
     const yawDelta = THREE.MathUtils.euclideanModulo(desiredYaw.current - root.current.rotation.y + Math.PI, Math.PI * 2) - Math.PI;
     root.current.rotation.y += yawDelta * (1 - Math.exp(-8.5 * Math.min(delta, 0.05)));
 
-    const wheatDistance = root.current.position.distanceTo(WHEAT);
-    const postDistance = root.current.position.distanceTo(TRAINING_POST);
-    if (nearWheat !== (!collected.current && wheatDistance < 3.1)) setNearWheat(!collected.current && wheatDistance < 3.1);
-    if (nearPost !== (postDistance < 3.1)) setNearPost(postDistance < 3.1);
-
-    const t = state.clock.elapsedTime;
-    const stride = isMoving ? Math.sin(t * (running ? 13 : 8)) * (running ? 0.72 : 0.42) : 0;
-    if (leftLeg.current) leftLeg.current.rotation.x = THREE.MathUtils.damp(leftLeg.current.rotation.x, stride, 12, delta);
-    if (rightLeg.current) rightLeg.current.rotation.x = THREE.MathUtils.damp(rightLeg.current.rotation.x, -stride, 12, delta);
-    if (leftArm.current) leftArm.current.rotation.x = THREE.MathUtils.damp(leftArm.current.rotation.x, -stride * 0.55, 10, delta);
-    if (rightArm.current) {
-      const armTarget = lock.current && rightArm.current.rotation.x < -1 ? rightArm.current.rotation.x : stride * 0.55;
-      rightArm.current.rotation.x = THREE.MathUtils.damp(rightArm.current.rotation.x, armTarget, 10, delta);
+    const mode = stealth.current ? 'Stealth' : running ? 'Run' : isMoving ? 'Walk' : 'Idle';
+    if (modeRef.current !== mode) {
+      modeRef.current = mode;
+      setLocomotion(mode);
+      onModeChange(mode);
     }
-    if (cloak.current) cloak.current.rotation.x = THREE.MathUtils.damp(cloak.current.rotation.x, 0.06 + Math.sin(t * 3.2) * 0.018 + (running ? 0.08 : 0), 4, delta);
 
-    // La cámara acompaña el giro del personaje con interpolación angular y seguimiento amortiguado.
     const forward = new THREE.Vector3(Math.sin(root.current.rotation.y), 0, Math.cos(root.current.rotation.y));
     const side = new THREE.Vector3(forward.z, 0, -forward.x);
     const cameraPosition = root.current.position.clone()
@@ -524,61 +518,13 @@ function Gideon({ onStatus, onCollected, touchDirection, touchRunning }) {
   });
 
   return <group ref={root} position={[0, 0, 15]} rotation-y={Math.PI}>
-    <group ref={cloak} position={[0, 1.0, -0.23]} rotation-x={0.08}>
-      <mesh scale={[0.58, 0.9, 0.22]} castShadow receiveShadow>
-        <sphereGeometry args={[1, 24, 20]} />
-        <meshStandardMaterial color="#653d2d" roughness={1} />
-      </mesh>
-      <mesh position={[0, -0.53, -0.05]} rotation-x={-0.12} castShadow>
-        <coneGeometry args={[0.55, 0.42, 24, 1, true]} />
-        <meshStandardMaterial color="#744632" side={THREE.DoubleSide} roughness={1} />
-      </mesh>
-    </group>
-    <mesh position={[0, 0.97, 0]} castShadow receiveShadow>
-      <latheGeometry args={[[
-        new THREE.Vector2(0.19, 0.08), new THREE.Vector2(0.34, 0.12),
-        new THREE.Vector2(0.4, 0.38), new THREE.Vector2(0.36, 0.85),
-        new THREE.Vector2(0.43, 1.22), new THREE.Vector2(0.47, 1.43),
-        new THREE.Vector2(0.3, 1.63), new THREE.Vector2(0.22, 1.68),
-      ], 28]} />
-      <meshStandardMaterial color="#b89a72" roughness={0.96} />
-    </mesh>
-    <mesh position={[0, 1.22, -0.01]} castShadow>
-      <boxGeometry args={[0.78, 0.12, 0.64]} />
-      <meshStandardMaterial color="#563c2a" roughness={1} />
-    </mesh>
-    <mesh position={[0, 1.22, 0.34]} castShadow><boxGeometry args={[0.12, 0.13, 0.06]} /><meshStandardMaterial color="#b68b4e" metalness={0.45} roughness={0.5} /></mesh>
-    <mesh position={[0, 1.58, -0.06]} rotation-z={0.02} castShadow>
-      <torusGeometry args={[0.29, 0.055, 9, 32]} />
-      <meshStandardMaterial color="#8b5b36" roughness={1} />
-    </mesh>
-    <group ref={leftLeg} position={[-0.19, 0.42, 0]}>
-      <mesh position={[0, -0.15, 0]} castShadow><capsuleGeometry args={[0.15, 0.6, 6, 12]} /><meshStandardMaterial color="#594333" roughness={1} /></mesh>
-      <mesh position={[0, -0.47, 0.1]} castShadow><capsuleGeometry args={[0.15, 0.22, 4, 10]} /><meshStandardMaterial color="#4b3022" roughness={0.95} /></mesh>
-    </group>
-    <group ref={rightLeg} position={[0.19, 0.42, 0]}>
-      <mesh position={[0, -0.15, 0]} castShadow><capsuleGeometry args={[0.15, 0.6, 6, 12]} /><meshStandardMaterial color="#594333" roughness={1} /></mesh>
-      <mesh position={[0, -0.47, 0.1]} castShadow><capsuleGeometry args={[0.15, 0.22, 4, 10]} /><meshStandardMaterial color="#4b3022" roughness={0.95} /></mesh>
-    </group>
-    <group ref={leftArm} position={[-0.46, 1.42, 0]}>
-      <mesh position={[0, -0.29, 0]} rotation-z={-0.08} castShadow><capsuleGeometry args={[0.15, 0.58, 6, 12]} /><meshStandardMaterial color="#a36e4d" roughness={0.95} /></mesh>
-      <mesh position={[0, -0.64, 0.02]} castShadow><sphereGeometry args={[0.14, 14, 12]} /><meshStandardMaterial color="#996444" roughness={0.95} /></mesh>
-    </group>
-    <group ref={rightArm} position={[0.46, 1.42, 0]}>
-      <mesh position={[0, -0.29, 0]} rotation-z={0.08} castShadow><capsuleGeometry args={[0.15, 0.58, 6, 12]} /><meshStandardMaterial color="#a36e4d" roughness={0.95} /></mesh>
-      <mesh position={[0, -0.64, 0.02]} castShadow><sphereGeometry args={[0.14, 14, 12]} /><meshStandardMaterial color="#996444" roughness={0.95} /></mesh>
-    </group>
-    <mesh position={[0, 2.0, 0]} castShadow><sphereGeometry args={[0.29, 24, 20]} /><meshStandardMaterial color="#a97151" roughness={0.95} /></mesh>
-    <mesh position={[0, 2.13, -0.07]} scale={[1.02, 0.76, 0.92]} castShadow><sphereGeometry args={[0.3, 24, 16, 0, Math.PI * 2, 0, Math.PI / 2]} /><meshStandardMaterial color="#2d211c" roughness={1} /></mesh>
-    {[-0.21, -0.1, 0, 0.1, 0.21].map((x, i) => <mesh key={x} position={[x, 1.92 + (i % 2) * 0.04, -0.23]} rotation-z={x * 0.7} castShadow><sphereGeometry args={[0.095, 12, 10]} /><meshStandardMaterial color="#30221b" roughness={1} /></mesh>)}
-    <mesh position={[0, 2.21, 0.02]}><torusGeometry args={[0.28, 0.035, 7, 28]} /><meshStandardMaterial color="#b99356" metalness={0.2} roughness={0.7} /></mesh>
-    <mesh position={[0, 1.83, 0.16]} castShadow><sphereGeometry args={[0.16, 14, 12]} /><meshStandardMaterial color="#3a261d" roughness={1} /></mesh>
-    <mesh position={[0, 2.47, -0.01]}><sphereGeometry args={[0.13, 12, 10]} /><meshStandardMaterial color="#3c281f" roughness={1} /></mesh>
-    {isStealth && <mesh position={[0, 2.8, 0]}><sphereGeometry args={[0.6, 16, 12]} /><meshBasicMaterial color="#273b3b" transparent opacity={0.1} /></mesh>}
+    <primitive object={character} />
   </group>;
 }
 
-function World({ collected, onStatus, onCollected, touchDirection, touchRunning }) {
+useGLTF.preload(`${import.meta.env.BASE_URL}assets/gedeon-character.glb`);
+
+function World({ collected, onStatus, onCollected, touchDirection, touchRunning, onModeChange }) {
   return <>
     <Sky distance={450000} sunPosition={[90, 18, -75]} inclination={0.46} azimuth={0.25} rayleigh={2.8} turbidity={8.5} mieCoefficient={0.012} mieDirectionalG={0.82} />
     <color attach="background" args={['#d7a66f']} />
@@ -631,7 +577,7 @@ function World({ collected, onStatus, onCollected, touchDirection, touchRunning 
     <Rock position={[34, 0.2, -4]} scale={[1.7, 0.6, 1.2]} color="#9a8161" />
     <Rock position={[-34, 0.2, -4]} scale={[1.3, 0.45, 1.1]} color="#806b53" />
 
-    <Gideon onStatus={onStatus} onCollected={onCollected} touchDirection={touchDirection} touchRunning={touchRunning} />
+    <Gideon onStatus={onStatus} onCollected={onCollected} touchDirection={touchDirection} touchRunning={touchRunning} onModeChange={onModeChange} />
     <ContactShadows position={[0, 0.025, 0]} opacity={0.34} scale={72} blur={3.2} far={24} />
   </>;
 }
@@ -701,6 +647,7 @@ export default function App() {
   const [collected, setCollected] = useState(false);
   const [touchDirection, setTouchDirection] = useState({ x: 0, y: 0 });
   const [touchRunning, setTouchRunning] = useState(false);
+  const [locomotion, setLocomotion] = useState('Idle');
   const onStatus = useCallback((value) => setStatus(value), []);
   const onCollected = useCallback(() => setCollected(true), []);
   const onCollectWheat = useCallback(() => {
@@ -708,8 +655,11 @@ export default function App() {
   }, []);
   return <main className="game">
     <Canvas shadows camera={{ position: [0, 4.3, 23], fov: 48, near: 0.1, far: 220 }} dpr={[1, 1.5]} gl={{ antialias: true, powerPreference: 'high-performance' }}>
-      <World collected={collected} onStatus={onStatus} onCollected={onCollected} touchDirection={touchDirection} touchRunning={touchRunning} />
+      <World collected={collected} onStatus={onStatus} onCollected={onCollected} touchDirection={touchDirection} touchRunning={touchRunning} onModeChange={setLocomotion} />
     </Canvas>
+    <div className={`movement-badge movement-${locomotion.toLowerCase()}`} aria-live="polite">
+      <span className="movement-dot" />{({ Idle: 'En reposo', Walk: 'Caminando', Run: 'Corriendo', Stealth: 'Modo sigilo' })[locomotion]}
+    </div>
     <header className="hud-top">
       <div className="player-card"><div className="player-avatar"><span>G</span></div>
         <div className="player-info"><div className="player-name">Gedeón</div><div className="stat-bar health"><span /></div><div className="stat-bar stamina"><span /></div></div>
