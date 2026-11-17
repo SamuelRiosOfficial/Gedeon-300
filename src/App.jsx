@@ -384,7 +384,7 @@ const KEY_BINDINGS = {
   KeyX: 'action', x: 'action', X: 'action',
 };
 
-function Gideon({ onStatus, onCollected, touchDirection }) {
+function Gideon({ onStatus, onCollected, touchDirection, touchRunning }) {
   const root = useRef();
   const leftLeg = useRef();
   const rightLeg = useRef();
@@ -395,19 +395,33 @@ function Gideon({ onStatus, onCollected, touchDirection }) {
   const stealth = useRef(false);
   const collected = useRef(false);
   const lock = useRef(false);
+  const velocity = useRef(new THREE.Vector3());
+  const desiredYaw = useRef(Math.PI);
   const [isStealth, setIsStealth] = useState(false);
   const [nearWheat, setNearWheat] = useState(false);
   const [nearPost, setNearPost] = useState(false);
 
+  const collectWheat = useCallback(() => {
+    if (!root.current || lock.current || collected.current) return;
+    if (root.current.position.distanceTo(WHEAT) >= 3.1) {
+      onStatus('Acércate al trigo para poder recogerlo.');
+      return;
+    }
+    lock.current = true;
+    collected.current = true;
+    onCollected();
+    onStatus('Has recuperado el trigo escondido.');
+    window.setTimeout(() => { lock.current = false; }, 420);
+  }, [onCollected, onStatus]);
+
   const act = useCallback(() => {
     if (!root.current || lock.current) return;
+    if (!collected.current && root.current.position.distanceTo(WHEAT) < 3.1) {
+      collectWheat();
+      return;
+    }
     lock.current = true;
-    const p = root.current.position;
-    if (!collected.current && p.distanceTo(WHEAT) < 3.1) {
-      collected.current = true;
-      onCollected();
-      onStatus('Has recuperado el trigo escondido.');
-    } else if (p.distanceTo(TRAINING_POST) < 3.1) {
+    if (root.current.position.distanceTo(TRAINING_POST) < 3.1) {
       onStatus('Gedeón golpea el poste de práctica.');
       if (rightArm.current) rightArm.current.rotation.x = -2;
     } else {
@@ -419,7 +433,13 @@ function Gideon({ onStatus, onCollected, touchDirection }) {
       lock.current = false;
       if (rightArm.current) rightArm.current.rotation.x = 0;
     }, 420);
-  }, [onCollected, onStatus]);
+  }, [collectWheat, onStatus]);
+
+  useEffect(() => {
+    const collectHandler = () => collectWheat();
+    window.addEventListener('gedeon:collect-wheat', collectHandler);
+    return () => window.removeEventListener('gedeon:collect-wheat', collectHandler);
+  }, [collectWheat]);
 
   useEffect(() => {
     const clearKeys = () => Object.keys(keys.current).forEach((key) => { keys.current[key] = false; });
@@ -452,19 +472,26 @@ function Gideon({ onStatus, onCollected, touchDirection }) {
   useFrame((state, delta) => {
     if (!root.current) return;
     const k = keys.current;
-    const x = Number(k.right || touchDirection.x > 0.2) - Number(k.left || touchDirection.x < -0.2);
-    const z = Number(k.down || touchDirection.y > 0.2) - Number(k.up || touchDirection.y < -0.2);
-    const moving = !!(x || z);
-    const running = moving && k.run && !stealth.current;
-    const speed = stealth.current ? 1.65 : running ? 7.1 : 3.55;
+    const inputX = THREE.MathUtils.clamp(touchDirection.x + Number(k.right) - Number(k.left), -1, 1);
+    const inputZ = THREE.MathUtils.clamp(touchDirection.y + Number(k.down) - Number(k.up), -1, 1);
+    const input = new THREE.Vector3(inputX, 0, inputZ);
+    const moving = input.lengthSq() > 0.012;
+    if (moving) input.normalize();
 
-    if (moving) {
-      const direction = new THREE.Vector3(x, 0, z).normalize();
-      root.current.position.addScaledVector(direction, Math.min(delta, 0.05) * speed);
-      root.current.position.x = THREE.MathUtils.clamp(root.current.position.x, -WORLD_LIMIT, WORLD_LIMIT);
-      root.current.position.z = THREE.MathUtils.clamp(root.current.position.z, -WORLD_LIMIT, WORLD_LIMIT);
-      root.current.rotation.y = Math.atan2(direction.x, direction.z);
-    }
+    const running = moving && (k.run || touchRunning) && !stealth.current;
+    const speed = stealth.current ? 1.65 : running ? 7.1 : 3.55;
+    const targetVelocity = input.multiplyScalar(speed);
+    const acceleration = moving ? 10.5 : 7.5;
+    velocity.current.lerp(targetVelocity, 1 - Math.exp(-acceleration * Math.min(delta, 0.05)));
+    if (velocity.current.lengthSq() < 0.0008) velocity.current.set(0, 0, 0);
+    root.current.position.addScaledVector(velocity.current, Math.min(delta, 0.05));
+    root.current.position.x = THREE.MathUtils.clamp(root.current.position.x, -WORLD_LIMIT, WORLD_LIMIT);
+    root.current.position.z = THREE.MathUtils.clamp(root.current.position.z, -WORLD_LIMIT, WORLD_LIMIT);
+
+    const isMoving = velocity.current.lengthSq() > 0.035;
+    if (isMoving) desiredYaw.current = Math.atan2(velocity.current.x, velocity.current.z);
+    const yawDelta = THREE.MathUtils.euclideanModulo(desiredYaw.current - root.current.rotation.y + Math.PI, Math.PI * 2) - Math.PI;
+    root.current.rotation.y += yawDelta * (1 - Math.exp(-8.5 * Math.min(delta, 0.05)));
 
     const wheatDistance = root.current.position.distanceTo(WHEAT);
     const postDistance = root.current.position.distanceTo(TRAINING_POST);
@@ -472,16 +499,17 @@ function Gideon({ onStatus, onCollected, touchDirection }) {
     if (nearPost !== (postDistance < 3.1)) setNearPost(postDistance < 3.1);
 
     const t = state.clock.elapsedTime;
-    const stride = moving ? Math.sin(t * (running ? 13 : 8)) * (running ? 0.72 : 0.42) : 0;
-    if (leftLeg.current) leftLeg.current.rotation.x = stride;
-    if (rightLeg.current) rightLeg.current.rotation.x = -stride;
-    if (leftArm.current) leftArm.current.rotation.x = -stride * 0.55;
-    if (rightArm.current) rightArm.current.rotation.x = lock.current && rightArm.current.rotation.x < -1 ? rightArm.current.rotation.x : stride * 0.55;
-    if (cloak.current) {
-      cloak.current.rotation.x = 0.06 + Math.sin(t * 3.2) * 0.018 + (running ? 0.08 : 0);
+    const stride = isMoving ? Math.sin(t * (running ? 13 : 8)) * (running ? 0.72 : 0.42) : 0;
+    if (leftLeg.current) leftLeg.current.rotation.x = THREE.MathUtils.damp(leftLeg.current.rotation.x, stride, 12, delta);
+    if (rightLeg.current) rightLeg.current.rotation.x = THREE.MathUtils.damp(rightLeg.current.rotation.x, -stride, 12, delta);
+    if (leftArm.current) leftArm.current.rotation.x = THREE.MathUtils.damp(leftArm.current.rotation.x, -stride * 0.55, 10, delta);
+    if (rightArm.current) {
+      const armTarget = lock.current && rightArm.current.rotation.x < -1 ? rightArm.current.rotation.x : stride * 0.55;
+      rightArm.current.rotation.x = THREE.MathUtils.damp(rightArm.current.rotation.x, armTarget, 10, delta);
     }
+    if (cloak.current) cloak.current.rotation.x = THREE.MathUtils.damp(cloak.current.rotation.x, 0.06 + Math.sin(t * 3.2) * 0.018 + (running ? 0.08 : 0), 4, delta);
 
-    // Camera stays behind Gideon and looks into the direction he is facing.
+    // La cámara acompaña el giro del personaje con interpolación angular y seguimiento amortiguado.
     const forward = new THREE.Vector3(Math.sin(root.current.rotation.y), 0, Math.cos(root.current.rotation.y));
     const side = new THREE.Vector3(forward.z, 0, -forward.x);
     const cameraPosition = root.current.position.clone()
@@ -491,7 +519,7 @@ function Gideon({ onStatus, onCollected, touchDirection }) {
     const cameraTarget = root.current.position.clone()
       .addScaledVector(forward, 4.0)
       .add(new THREE.Vector3(0, 1.45, 0));
-    state.camera.position.lerp(cameraPosition, 1 - Math.exp(-5.2 * delta));
+    state.camera.position.lerp(cameraPosition, 1 - Math.exp(-3.8 * Math.min(delta, 0.05)));
     state.camera.lookAt(cameraTarget);
   });
 
@@ -550,7 +578,7 @@ function Gideon({ onStatus, onCollected, touchDirection }) {
   </group>;
 }
 
-function World({ collected, onStatus, onCollected, touchDirection }) {
+function World({ collected, onStatus, onCollected, touchDirection, touchRunning }) {
   return <>
     <Sky distance={450000} sunPosition={[90, 18, -75]} inclination={0.46} azimuth={0.25} rayleigh={2.8} turbidity={8.5} mieCoefficient={0.012} mieDirectionalG={0.82} />
     <color attach="background" args={['#d7a66f']} />
@@ -603,7 +631,7 @@ function World({ collected, onStatus, onCollected, touchDirection }) {
     <Rock position={[34, 0.2, -4]} scale={[1.7, 0.6, 1.2]} color="#9a8161" />
     <Rock position={[-34, 0.2, -4]} scale={[1.3, 0.45, 1.1]} color="#806b53" />
 
-    <Gideon onStatus={onStatus} onCollected={onCollected} touchDirection={touchDirection} />
+    <Gideon onStatus={onStatus} onCollected={onCollected} touchDirection={touchDirection} touchRunning={touchRunning} />
     <ContactShadows position={[0, 0.025, 0]} opacity={0.34} scale={72} blur={3.2} far={24} />
   </>;
 }
@@ -618,7 +646,7 @@ function MiniMap() {
   </div>;
 }
 
-function TouchControls({ onDirection, onAction }) {
+function TouchControls({ onDirection, onRunChange, onCollect }) {
   const padRef = useRef(null);
   const pointerRef = useRef(null);
   const [active, setActive] = useState(false);
@@ -658,9 +686,13 @@ function TouchControls({ onDirection, onAction }) {
       <span className="joystick-direction direction-right">▶</span>
       <span className="joystick-knob" />
     </div>
-    <button className="touch-action" type="button" onPointerDown={(event) => event.stopPropagation()} onClick={onAction}>
-      <span>X</span><small>Acción</small>
-    </button>
+    <div className="touch-buttons">
+      <button className="touch-run" type="button"
+        onPointerDown={(event) => { event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId); onRunChange(true); }}
+        onPointerUp={() => onRunChange(false)} onPointerCancel={() => onRunChange(false)}
+        onLostPointerCapture={() => onRunChange(false)}><span>»</span><small>Correr</small></button>
+      <button className="touch-action" type="button" onClick={onCollect}><span>↓</span><small>Recoger</small></button>
+    </div>
   </div>;
 }
 
@@ -668,15 +700,15 @@ export default function App() {
   const [status, setStatus] = useState('Dirígete al campo donde escondiste el trigo.');
   const [collected, setCollected] = useState(false);
   const [touchDirection, setTouchDirection] = useState({ x: 0, y: 0 });
+  const [touchRunning, setTouchRunning] = useState(false);
   const onStatus = useCallback((value) => setStatus(value), []);
   const onCollected = useCallback(() => setCollected(true), []);
-  const onTouchAction = useCallback(() => {
-    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'x', code: 'KeyX', bubbles: true }));
-    window.dispatchEvent(new KeyboardEvent('keyup', { key: 'x', code: 'KeyX', bubbles: true }));
+  const onCollectWheat = useCallback(() => {
+    window.dispatchEvent(new CustomEvent('gedeon:collect-wheat'));
   }, []);
   return <main className="game">
     <Canvas shadows camera={{ position: [0, 4.3, 23], fov: 48, near: 0.1, far: 220 }} dpr={[1, 1.5]} gl={{ antialias: true, powerPreference: 'high-performance' }}>
-      <World collected={collected} onStatus={onStatus} onCollected={onCollected} touchDirection={touchDirection} />
+      <World collected={collected} onStatus={onStatus} onCollected={onCollected} touchDirection={touchDirection} touchRunning={touchRunning} />
     </Canvas>
     <header className="hud-top">
       <div className="player-card"><div className="player-avatar"><span>G</span></div>
@@ -698,6 +730,6 @@ export default function App() {
     </section>
     <div className="action-prompt"><span className="action-key">X</span><span>{collected ? 'Misión completada' : 'Explora la aldea'}</span></div>
     <div className="mission-toast" aria-live="polite">{status}</div>
-    <TouchControls onDirection={setTouchDirection} onAction={onTouchAction} />
+    <TouchControls onDirection={setTouchDirection} onRunChange={setTouchRunning} onCollect={onCollectWheat} />
   </main>;
 }
