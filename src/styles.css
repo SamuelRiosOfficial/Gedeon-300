@@ -180,3 +180,16 @@ body { min-width: 320px; }
   .action-prompt { right: 12px; bottom: 15px; gap: 7px; padding: 6px 10px 6px 6px; font-size: 11px; }
   .action-key { width: 30px; height: 30px; font-size: 15px; }
 }
+
+/* Mobile touch joystick */
+.touch-controls{display:none;position:absolute;z-index:8;inset:auto 0 0;height:190px;padding:0 22px max(18px,env(safe-area-inset-bottom));align-items:flex-end;justify-content:space-between;pointer-events:none;touch-action:none}
+.joystick-pad{position:relative;width:138px;height:138px;flex:0 0 138px;border:1px solid rgba(244,226,190,.58);border-radius:50%;background:radial-gradient(circle,rgba(255,255,255,.12),rgba(17,20,18,.68) 72%);box-shadow:0 5px 20px #0008,inset 0 0 0 7px rgba(255,255,255,.045);pointer-events:auto;touch-action:none;user-select:none}
+.joystick-pad.is-active{border-color:#e5c47e;background-color:rgba(183,143,82,.18)}
+.joystick-knob{position:absolute;left:50%;top:50%;width:54px;height:54px;margin:-27px 0 0 -27px;border:2px solid rgba(255,239,208,.86);border-radius:50%;background:linear-gradient(145deg,rgba(207,177,124,.9),rgba(75,57,39,.94));box-shadow:0 3px 12px #0009,inset 0 1px 5px #fff5;pointer-events:none}
+.joystick-direction{position:absolute;color:rgba(255,245,222,.65);font-size:12px;pointer-events:none}
+.direction-up{top:10px;left:50%;transform:translateX(-50%)}.direction-down{bottom:10px;left:50%;transform:translateX(-50%)}
+.direction-left{left:10px;top:50%;transform:translateY(-50%)}.direction-right{right:10px;top:50%;transform:translateY(-50%)}
+.touch-action{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;width:76px;height:76px;margin:0 5px 17px 0;border:2px solid rgba(245,220,176,.82);border-radius:50%;color:#fff4df;background:radial-gradient(circle at 35% 25%,#a47b49,#39291e 76%);box-shadow:0 5px 18px #0009,inset 0 1px 5px #fff4;pointer-events:auto;touch-action:manipulation;-webkit-tap-highlight-color:transparent}
+.touch-action span{font:800 23px Georgia,serif;line-height:1}.touch-action small{font-size:10px}
+@media(max-width:720px),(pointer:coarse){.touch-controls{display:flex}.controls-card{display:none}.mission-card{max-width:245px}.action-prompt{display:none}.touch-action:active{transform:scale(.96);filter:brightness(1.15)}}
+@media(max-width:390px){.joystick-pad{width:120px;height:120px;flex-basis:120px}.touch-controls{padding-left:15px;padding-right:15px}}
