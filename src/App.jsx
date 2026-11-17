@@ -384,7 +384,7 @@ const KEY_BINDINGS = {
   KeyX: 'action', x: 'action', X: 'action',
 };
 
-function Gideon({ onStatus, onCollected }) {
+function Gideon({ onStatus, onCollected, touchDirection }) {
   const root = useRef();
   const leftLeg = useRef();
   const rightLeg = useRef();
@@ -452,8 +452,8 @@ function Gideon({ onStatus, onCollected }) {
   useFrame((state, delta) => {
     if (!root.current) return;
     const k = keys.current;
-    const x = Number(k.right) - Number(k.left);
-    const z = Number(k.down) - Number(k.up);
+    const x = Number(k.right || touchDirection.x > 0.2) - Number(k.left || touchDirection.x < -0.2);
+    const z = Number(k.down || touchDirection.y > 0.2) - Number(k.up || touchDirection.y < -0.2);
     const moving = !!(x || z);
     const running = moving && k.run && !stealth.current;
     const speed = stealth.current ? 1.65 : running ? 7.1 : 3.55;
@@ -550,7 +550,7 @@ function Gideon({ onStatus, onCollected }) {
   </group>;
 }
 
-function World({ collected, onStatus, onCollected }) {
+function World({ collected, onStatus, onCollected, touchDirection }) {
   return <>
     <Sky distance={450000} sunPosition={[90, 18, -75]} inclination={0.46} azimuth={0.25} rayleigh={2.8} turbidity={8.5} mieCoefficient={0.012} mieDirectionalG={0.82} />
     <color attach="background" args={['#d7a66f']} />
@@ -603,7 +603,7 @@ function World({ collected, onStatus, onCollected }) {
     <Rock position={[34, 0.2, -4]} scale={[1.7, 0.6, 1.2]} color="#9a8161" />
     <Rock position={[-34, 0.2, -4]} scale={[1.3, 0.45, 1.1]} color="#806b53" />
 
-    <Gideon onStatus={onStatus} onCollected={onCollected} />
+    <Gideon onStatus={onStatus} onCollected={onCollected} touchDirection={touchDirection} />
     <ContactShadows position={[0, 0.025, 0]} opacity={0.34} scale={72} blur={3.2} far={24} />
   </>;
 }
@@ -618,44 +618,86 @@ function MiniMap() {
   </div>;
 }
 
+function TouchControls({ onDirection, onAction }) {
+  const padRef = useRef(null);
+  const pointerRef = useRef(null);
+  const [active, setActive] = useState(false);
+  const move = useCallback((event) => {
+    if (pointerRef.current !== event.pointerId || !padRef.current) return;
+    const rect = padRef.current.getBoundingClientRect();
+    const radius = rect.width * 0.36;
+    const dx = event.clientX - (rect.left + rect.width / 2);
+    const dy = event.clientY - (rect.top + rect.height / 2);
+    const distance = Math.hypot(dx, dy);
+    const scale = distance > radius ? radius / distance : 1;
+    const x = dx * scale / radius;
+    const y = dy * scale / radius;
+    onDirection({ x, y });
+    const knob = padRef.current.querySelector('.joystick-knob');
+    if (knob) knob.style.transform = `translate(${x * 31}px, ${y * 31}px)`;
+  }, [onDirection]);
+  const stop = useCallback((event) => {
+    if (pointerRef.current !== event.pointerId) return;
+    pointerRef.current = null;
+    setActive(false);
+    onDirection({ x: 0, y: 0 });
+    if (padRef.current) {
+      const knob = padRef.current.querySelector('.joystick-knob');
+      if (knob) knob.style.transform = 'translate(0, 0)';
+      try { padRef.current.releasePointerCapture(event.pointerId); } catch {}
+    }
+  }, [onDirection]);
+  return <div className="touch-controls" aria-label="Controles táctiles">
+    <div ref={padRef} className={`joystick-pad${active ? ' is-active' : ''}`}
+      role="application" aria-label="Desliza el dedo para dirigir a Gedeón"
+      onPointerDown={(event) => { event.preventDefault(); pointerRef.current = event.pointerId; setActive(true); event.currentTarget.setPointerCapture(event.pointerId); move(event); }}
+      onPointerMove={move} onPointerUp={stop} onPointerCancel={stop} onLostPointerCapture={stop}>
+      <span className="joystick-direction direction-up">▲</span>
+      <span className="joystick-direction direction-down">▼</span>
+      <span className="joystick-direction direction-left">◀</span>
+      <span className="joystick-direction direction-right">▶</span>
+      <span className="joystick-knob" />
+    </div>
+    <button className="touch-action" type="button" onPointerDown={(event) => event.stopPropagation()} onClick={onAction}>
+      <span>X</span><small>Acción</small>
+    </button>
+  </div>;
+}
+
 export default function App() {
   const [status, setStatus] = useState('Dirígete al campo donde escondiste el trigo.');
   const [collected, setCollected] = useState(false);
+  const [touchDirection, setTouchDirection] = useState({ x: 0, y: 0 });
   const onStatus = useCallback((value) => setStatus(value), []);
   const onCollected = useCallback(() => setCollected(true), []);
-
+  const onTouchAction = useCallback(() => {
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'x', code: 'KeyX', bubbles: true }));
+    window.dispatchEvent(new KeyboardEvent('keyup', { key: 'x', code: 'KeyX', bubbles: true }));
+  }, []);
   return <main className="game">
-    <Canvas shadows camera={{ position: [0, 4.3, 23], fov: 48, near: 0.1, far: 220 }} dpr={[1, 1.8]} gl={{ antialias: true, powerPreference: 'high-performance' }}>
-      <World collected={collected} onStatus={onStatus} onCollected={onCollected} />
+    <Canvas shadows camera={{ position: [0, 4.3, 23], fov: 48, near: 0.1, far: 220 }} dpr={[1, 1.5]} gl={{ antialias: true, powerPreference: 'high-performance' }}>
+      <World collected={collected} onStatus={onStatus} onCollected={onCollected} touchDirection={touchDirection} />
     </Canvas>
     <header className="hud-top">
-      <div className="player-card">
-        <div className="player-avatar"><span>G</span></div>
-        <div className="player-info">
-          <div className="player-name">Gedeón</div>
-          <div className="stat-bar health"><span /></div>
-          <div className="stat-bar stamina"><span /></div>
-        </div>
+      <div className="player-card"><div className="player-avatar"><span>G</span></div>
+        <div className="player-info"><div className="player-name">Gedeón</div><div className="stat-bar health"><span /></div><div className="stat-bar stamina"><span /></div></div>
       </div>
-      <div className="chapter">CAPÍTULO I <i>·</i> TIEMPOS DE OPRESIÓN</div>
-      <MiniMap />
+      <div className="chapter">CAPÍTULO I <i>·</i> TIEMPOS DE OPRESIÓN</div><MiniMap />
     </header>
-
     <section className="mission-card">
       <div className="panel-heading"><span className="mission-glyph">✦</span> Misión actual</div>
       <h1>{collected ? 'Trigo recuperado' : 'Encuentra tu escondite'}</h1>
       <p>{collected ? 'Has recuperado el trigo que escondiste.' : status}</p>
       <div className="mission-objective"><span className={collected ? 'checked' : ''}>{collected ? '✓' : ''}</span>{collected ? 'Objetivo completado' : 'Dirígete al lugar donde has ocultado el trigo.'}</div>
     </section>
-
     <section className="controls-card">
       <div className="panel-heading"><span className="mission-glyph">✥</span> Controles</div>
       <div className="control-row"><span className="key">↑</span><span className="key">←</span><span className="key">↓</span><span className="key">→</span><span>Caminar</span></div>
       <div className="control-row"><span className="key wide">Z</span><span>Correr</span></div>
       <div className="control-row"><span className="key wide">X</span><span>Acción / recoger / sigilo</span></div>
     </section>
-
     <div className="action-prompt"><span className="action-key">X</span><span>{collected ? 'Misión completada' : 'Explora la aldea'}</span></div>
     <div className="mission-toast" aria-live="polite">{status}</div>
+    <TouchControls onDirection={setTouchDirection} onAction={onTouchAction} />
   </main>;
 }
